@@ -58,6 +58,8 @@ void VulkanEngine::init()
 
     init_sync_structures();
 
+    init_descriptors();
+
     // everything went fine
     _isInitialized = true;
 }
@@ -278,6 +280,24 @@ void VulkanEngine::init_sync_structures()
     VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
     VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info();
 
+    _renderSemaphores.resize(_swapchainImages.size()); // resizing here, will zero-initialize the vector properly, so once vkCreateSemaphore is run, it'll overwrite the values with real vulkan semaphore handles.
+
+    /// SEMAPHORES MUST BE PER-SWAPCHAIN-IMAGE!
+    // this is a bit confusing, but take it slow. 
+        // _renderSemaphores is a zero-initialized vector; i.e., it does not have any vkSemaphore's stored within in it. so how can we loop through the vector and run vkCreateSemaphore on it?
+        // the reason why is because as long as the size of the vector is known and we zero-initialized every element in the array (we did this by using .resize() above),
+        // we can run vkCreateSemaphore() on those zero-initialized elements and it will return the handle for a semaphore for us. Vulkan will basically GIVE us a valid semaphore
+        // if we run vkCreateSemaphore() (or rather, it will overwrite a valid handle to that memory address; as we pass in the address of the semaphore), even on random values. 
+        // The VkSemaphore object itself is actually just a handle! When we call VkCreateSemaphore, it'll handle the allocation and back-end business and give us a handle, which we 
+        // store inside of a VkSemaphore object/handle. So when we had <VkSemaphore _renderSemaphore> in the <FrameData> struct before, that wasn't an actual object (like a class you 
+        // would expect), it was just a handle which points to the GPU semaphore or whatever back-end shenannigans are happening (after you run VkCreateSemaphore).
+        // Basically: VkSemaphore is just a variable to hold the handle/memory address of the actual semaphore that lives inside Vulkan (which you store in the VkSemaphore after using vkCreateSemaphore()).
+        // So we don't have to actually STORE VkSemaphore's in the vector! 
+    for (auto& sema : _renderSemaphores)
+    {
+        VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &sema));
+    }
+
     // for each frame, create the fence and semaphores
     for (int i = 0 ; i < FRAME_OVERLAP ; i++)
     {
@@ -285,9 +305,56 @@ void VulkanEngine::init_sync_structures()
         VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_frames[i]._renderFence));
 
         VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
-        VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._renderSemaphore));
-
+        //VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._renderSemaphore));
     }
+}
+
+void VulkanEngine::init_descriptors()
+{
+    // create a descriptor pool that will hold 10 sets with 1 image each.
+    std::vector<DescriptorAllocator::PoolSizeRatio> sizes =
+    {
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 } // in the PoolSizeRatio struct, we initialize the type and ratio.
+    };
+    
+    globalDescriptorAllocator.init_pool(_device, 10, sizes);
+
+    // make the descriptor set layout for our compute draw
+    {
+        // the descriptor layout is a layout with only 1 binding at binding number 0, of type VK_DESCRIPTOR_TYPE_STORAGE_IMAGE (matching the pool).
+        DescriptorLayoutBuilder builder;
+        builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        _drawImageDescriptorLayout = builder.build(_device, VK_SHADER_STAGE_COMPUTE_BIT);
+    }
+
+    // allocate a descriptor set for our draw image.
+    _drawImageDescriptors = globalDescriptorAllocator.allocate(_device, _drawImageDescriptorLayout);
+
+    // a struct that specifies descriptor image information.
+    VkDescriptorImageInfo imgInfo{};
+    imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imgInfo.imageView = _drawImage.imageView;
+
+    VkWriteDescriptorSet drawImageWrite{};
+    drawImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    drawImageWrite.pNext = nullptr;
+
+    drawImageWrite.dstBinding = 0; // this specifies in the descriptor set, which descriptor binding we are writing to (using its binding index).
+    drawImageWrite.dstSet = _drawImageDescriptors; // the descriptor set we're writing to.
+    drawImageWrite.descriptorCount = 1;
+    drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    drawImageWrite.pImageInfo = &imgInfo;
+
+    vkUpdateDescriptorSets(_device, 1, &drawImageWrite, 0, nullptr);
+
+    // ensure that both the descriptor allocator and the new layout get cleaned up properly.
+    _mainDeletionQueue.push_function([&]()
+        {
+            globalDescriptorAllocator.destroy_pool(_device);
+
+            vkDestroyDescriptorSetLayout(_device, _drawImageDescriptorLayout, nullptr);
+        });
+
 }
 
 void VulkanEngine::cleanup()
@@ -304,7 +371,8 @@ void VulkanEngine::cleanup()
        
             //destroy sync objects
             vkDestroyFence(_device, _frames[i]._renderFence, nullptr);
-            vkDestroySemaphore(_device, _frames[i]._renderSemaphore, nullptr);
+            //vkDestroySemaphore(_device, _frames[i]._renderSemaphore, nullptr);
+            vkDestroySemaphore(_device, _renderSemaphores[i], nullptr);
             vkDestroySemaphore(_device, _frames[i]._swapchainSemaphore, nullptr);
 
             // free all objects from both frames.
@@ -375,7 +443,7 @@ void VulkanEngine::draw()
 
     VK_CHECK(vkResetFences(_device, 1, &get_current_frame()._renderFence));
 
-    // request image (an index) from the swapchain
+    // request image (i.e., the function returns the index of the next available presentable image) from the swapchain
     // we pass in the swapchain semaphore so we can sync other operations with the swapchain when we have an image ready to render.
     // basically, we use the swapchain semaphore to wait until we get the next swapchain image. it becomes signalled when we get one.
     uint32_t swapchainImageIndex{};
@@ -427,7 +495,6 @@ void VulkanEngine::draw()
     // finalize the command buffer (we can no longer add commands, but it now be executed).
     VK_CHECK(vkEndCommandBuffer(cmdBuff));
 
-
                                                                                     /// --- submit command buffer --- //
     
 
@@ -443,7 +510,8 @@ void VulkanEngine::draw()
     // the swapchain semaphore is signalled (meaning we got back an image from the swapchain), and then afterwards the commands on the buffer will be run... i think).
     // _rendersemaphore will be signalled once the command buffer has been submitted and executed. this allows us to present the image to the screen (written in the next section below)
     VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, get_current_frame()._swapchainSemaphore);
-    VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, get_current_frame()._renderSemaphore);
+    //VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, get_current_frame()._renderSemaphore);
+    VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _renderSemaphores[swapchainImageIndex]);
 
     VkSubmitInfo2 submit = vkinit::submit_info(&cmdInfo, &signalInfo, &waitInfo);
 
@@ -466,11 +534,13 @@ void VulkanEngine::draw()
     presentInfo.swapchainCount = 1;
 
     // we wait until the rendering is finished, before we present the image to the screen. 
-    presentInfo.pWaitSemaphores = &get_current_frame()._renderSemaphore;
+    //presentInfo.pWaitSemaphores = &get_current_frame()._renderSemaphore;
+    presentInfo.pWaitSemaphores = &_renderSemaphores[swapchainImageIndex];
+
     presentInfo.waitSemaphoreCount = 1;
 
     presentInfo.pImageIndices = &swapchainImageIndex;
-
+ 
     VK_CHECK(vkQueuePresentKHR(_graphicsQueue, &presentInfo));
 
     // increase the number of frames drawn
