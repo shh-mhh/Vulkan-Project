@@ -4,7 +4,7 @@
 #pragma once
 
 #include <vk_types.h>
-#include <vk_descriptors.h>
+
 
 /// <summary>
 /// ok dude, i'm not gonna lie... i'm lost with what the hell this deletion queue thingo is (sorta). lambdas, polymorphic function wrappers (std::function), functors... 
@@ -38,8 +38,7 @@ struct DeletionQueue
 	}
 };
 
-// we create a struct so we can neatly handle frame-local resources. we can have multiple frames in flight in vulkan (for double/triple buffering), and each frame can have it's own
-// resources, like command pools and buffers. so, instead of putting all of those in arrays, we create a struct for each frame with all of those juicy resources we need per frame.
+
 struct FrameData
 {
 	// we have a command pool and main command buffer for each "frame", because we're double buffering.
@@ -54,7 +53,7 @@ struct FrameData
 		// 1. Request an image for the swapchain (semaphore 1, which will be signalled when we get the image).
 		// 2. Wait until we're done drawing so we can present the image (semaphore 2, waits on semaphore 1 until it's signalled; meaning, semaphore 2 will wait until we got an image from the swapchain).
 		// 3. Alert the CPU that the GPU is finished rendering (fence 1).
-	VkSemaphore _swapchainSemaphore/*, _renderSemaphore*/{};
+	VkSemaphore _swapchainSemaphore, _renderSemaphore{};
 	VkFence _renderFence{};
 
 	// we add a deletion queue to each frame (in flight), as the lifetime of the objects that each frame has (command pool/buffer and semaphores/fence) is different to the rest of the 
@@ -112,13 +111,6 @@ public:
 
 	AllocatedImage _drawImage;
 	VkExtent2D _drawExtent;
-	
-	std::vector<VkSemaphore> _renderSemaphores{};
-
-	DescriptorAllocator globalDescriptorAllocator;
-
-	VkDescriptorSet _drawImageDescriptors;
-	VkDescriptorSetLayout _drawImageDescriptorLayout;
 
 	//initializes everything in the engine
 	void init();
@@ -142,7 +134,6 @@ private:
 	void init_sync_structures();
 	void create_swapchain(uint32_t width, uint32_t height);
 	void destroy_swapchain();
-	void init_descriptors();
 };
 
 
