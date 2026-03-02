@@ -113,12 +113,20 @@ public:
 	AllocatedImage _drawImage;
 	VkExtent2D _drawExtent;
 	
+	// We have to separate the render semaphores from the FrameData structs. 
+	// This is because, if we use these semaphores for each frame, then Vulkan can try to reuse the same semaphore. 
+	// Separating them to each swapchain image makes sure we SIGNAL when the actual SWAPCHAIN IMAGE is done being used, NOT when the frame is done (otherwise, because we're double 
+	// buffering, we have only 2 frames, we can wrap back around and go to the same frae because of this; if our sempahores are per frame, we can accidentally reuse it, but by
+	// making them per swapchain image, we know when a swapchain image has finished being used or not and we can use the semaphore safely). 
+	// I think, anyway.
 	std::vector<VkSemaphore> _renderSemaphores{};
 
 	DescriptorAllocator globalDescriptorAllocator;
 
 	VkDescriptorSet _drawImageDescriptors;
 	VkDescriptorSetLayout _drawImageDescriptorLayout;
+
+	uint32_t _swapchainImageIndex{};
 
 	//initializes everything in the engine
 	void init();

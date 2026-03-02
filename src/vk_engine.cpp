@@ -1,8 +1,8 @@
 ﻿//> includes
 #include "vk_engine.h"
 
-#include "SDL.h"
-#include <SDL_vulkan.h>
+#include "SDL2/SDL.h"
+#include <SDL2/SDL_vulkan.h>
 
 // --- other includes --- //
 #include <vk_initializers.h>
@@ -62,6 +62,8 @@ void VulkanEngine::init()
 
     // everything went fine
     _isInitialized = true;
+
+    fmt::println("Engine has been initialized successfully.");
 }
 
 void VulkanEngine::init_vulkan()
@@ -305,7 +307,6 @@ void VulkanEngine::init_sync_structures()
         VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_frames[i]._renderFence));
 
         VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
-        //VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._renderSemaphore));
     }
 }
 
@@ -345,7 +346,7 @@ void VulkanEngine::init_descriptors()
     drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     drawImageWrite.pImageInfo = &imgInfo;
 
-    vkUpdateDescriptorSets(_device, 1, &drawImageWrite, 0, nullptr);
+    //vkUpdateDescriptorSets(_device, 1, &drawImageWrite, 0, nullptr);
 
     // ensure that both the descriptor allocator and the new layout get cleaned up properly.
     _mainDeletionQueue.push_function([&]()
@@ -371,12 +372,16 @@ void VulkanEngine::cleanup()
        
             //destroy sync objects
             vkDestroyFence(_device, _frames[i]._renderFence, nullptr);
-            //vkDestroySemaphore(_device, _frames[i]._renderSemaphore, nullptr);
-            vkDestroySemaphore(_device, _renderSemaphores[i], nullptr);
             vkDestroySemaphore(_device, _frames[i]._swapchainSemaphore, nullptr);
 
             // free all objects from both frames.
             _frames[i]._deletionQueue.flush();
+        }
+
+        // delete the render semaphores separately. the amount of semaphores we have is the same as the amount of swapchain images we have.
+        for (int i = 0 ; i < _swapchainImages.size() ; i++)
+        {
+            vkDestroySemaphore(_device, _renderSemaphores[i], nullptr);
         }
 
         // flush the global deletion queue
@@ -446,8 +451,8 @@ void VulkanEngine::draw()
     // request image (i.e., the function returns the index of the next available presentable image) from the swapchain
     // we pass in the swapchain semaphore so we can sync other operations with the swapchain when we have an image ready to render.
     // basically, we use the swapchain semaphore to wait until we get the next swapchain image. it becomes signalled when we get one.
-    uint32_t swapchainImageIndex{};
-    VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain, 1000000000, get_current_frame()._swapchainSemaphore, nullptr, &swapchainImageIndex));
+    // uint32_t swapchainImageIndex{};
+    VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain, 1000000000, get_current_frame()._swapchainSemaphore, nullptr, &_swapchainImageIndex));
 
     // naming it cmdBuff for shorter writing.
     // we grab the current frames command buffer
@@ -484,13 +489,13 @@ void VulkanEngine::draw()
     // we transition the swapchain image from undefined ("don't care") to a destination transfer layout, which means we can write to the swapchain image using another image.
     // this allows us to copy over the drawImage we wrote to, onto the swapchain image so we can present it.
     vkutil::transition_image(cmdBuff, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    vkutil::transition_image(cmdBuff, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    vkutil::transition_image(cmdBuff, _swapchainImages[_swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     // execute a copy from the draw image into the swapchain
-    vkutil::copy_image_to_image(cmdBuff, _drawImage.image, _swapchainImages[swapchainImageIndex], _drawExtent, _swapchainExtent);
+    vkutil::copy_image_to_image(cmdBuff, _drawImage.image, _swapchainImages[_swapchainImageIndex], _drawExtent, _swapchainExtent);
 
     // set swapchain image layout to Present so we can show it on the screen
-    vkutil::transition_image(cmdBuff, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    vkutil::transition_image(cmdBuff, _swapchainImages[_swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     // finalize the command buffer (we can no longer add commands, but it now be executed).
     VK_CHECK(vkEndCommandBuffer(cmdBuff));
@@ -510,8 +515,7 @@ void VulkanEngine::draw()
     // the swapchain semaphore is signalled (meaning we got back an image from the swapchain), and then afterwards the commands on the buffer will be run... i think).
     // _rendersemaphore will be signalled once the command buffer has been submitted and executed. this allows us to present the image to the screen (written in the next section below)
     VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, get_current_frame()._swapchainSemaphore);
-    //VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, get_current_frame()._renderSemaphore);
-    VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _renderSemaphores[swapchainImageIndex]);
+    VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _renderSemaphores[_swapchainImageIndex]);
 
     VkSubmitInfo2 submit = vkinit::submit_info(&cmdInfo, &signalInfo, &waitInfo);
 
@@ -534,12 +538,11 @@ void VulkanEngine::draw()
     presentInfo.swapchainCount = 1;
 
     // we wait until the rendering is finished, before we present the image to the screen. 
-    //presentInfo.pWaitSemaphores = &get_current_frame()._renderSemaphore;
-    presentInfo.pWaitSemaphores = &_renderSemaphores[swapchainImageIndex];
+    presentInfo.pWaitSemaphores = &_renderSemaphores[_swapchainImageIndex];
 
     presentInfo.waitSemaphoreCount = 1;
 
-    presentInfo.pImageIndices = &swapchainImageIndex;
+    presentInfo.pImageIndices = &_swapchainImageIndex;
  
     VK_CHECK(vkQueuePresentKHR(_graphicsQueue, &presentInfo));
 

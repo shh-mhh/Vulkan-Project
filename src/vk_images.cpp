@@ -1,6 +1,9 @@
 #include <vk_images.h>
 #include <vk_initializers.h>
 
+// we have to use pipeline barriers to transition the VkImage to a format we want.
+// specifically, the way we use this function is to take a VkImage, transition it to a writeable format, write to it,
+// and then transition it to a read only format.
 void vkutil::transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout)
 {
 	VkImageMemoryBarrier2 imageBarrier{ imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
