@@ -128,6 +128,9 @@ public:
 
 	uint32_t _swapchainImageIndex{};
 
+	VkPipeline _gradientPipeline;
+	VkPipelineLayout _gradientPipelineLayout;
+
 	//initializes everything in the engine
 	void init();
 
@@ -151,6 +154,8 @@ private:
 	void create_swapchain(uint32_t width, uint32_t height);
 	void destroy_swapchain();
 	void init_descriptors();
+	void init_pipelines(); // calls the other pipeline initialization functions.
+	void init_background_pipelines();
 };
 
 

@@ -97,4 +97,6 @@ VkDescriptorSet DescriptorAllocator::allocate(VkDevice device, VkDescriptorSetLa
 
 	VkDescriptorSet ds;
 	VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &ds));
+
+	return ds;
 }

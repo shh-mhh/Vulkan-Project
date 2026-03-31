@@ -8,6 +8,7 @@
 #include <vk_initializers.h>
 #include <vk_types.h>
 #include <vk_images.h>
+#include <vk_pipelines.h>
 
 // boostrap library
 #include "VkBootstrap.h"
@@ -59,6 +60,8 @@ void VulkanEngine::init()
     init_sync_structures();
 
     init_descriptors();
+
+    init_pipelines();
 
     // everything went fine
     _isInitialized = true;
@@ -331,7 +334,7 @@ void VulkanEngine::init_descriptors()
     // allocate a descriptor set for our draw image.
     _drawImageDescriptors = globalDescriptorAllocator.allocate(_device, _drawImageDescriptorLayout);
 
-    // a struct that specifies descriptor image information.
+    // a struct that specifies descriptor image information. this will hold the image data we want to bind.
     VkDescriptorImageInfo imgInfo{};
     imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     imgInfo.imageView = _drawImage.imageView;
@@ -346,7 +349,7 @@ void VulkanEngine::init_descriptors()
     drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     drawImageWrite.pImageInfo = &imgInfo;
 
-    //vkUpdateDescriptorSets(_device, 1, &drawImageWrite, 0, nullptr);
+    vkUpdateDescriptorSets(_device, 1, &drawImageWrite, 0, nullptr);
 
     // ensure that both the descriptor allocator and the new layout get cleaned up properly.
     _mainDeletionQueue.push_function([&]()
@@ -358,48 +361,57 @@ void VulkanEngine::init_descriptors()
 
 }
 
-void VulkanEngine::cleanup()
+void VulkanEngine::init_pipelines()
 {
-    if (_isInitialized) {
+    init_background_pipelines();
+}
 
-        // make sure the GPU has stopped doing its things
-        vkDeviceWaitIdle(_device);
+void VulkanEngine::init_background_pipelines()
+{
+    // create the compute pipeline layout
+    VkPipelineLayoutCreateInfo computeLayout{};
+    computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    computeLayout.pNext = nullptr;
+    computeLayout.pSetLayouts = &_drawImageDescriptorLayout;
+    computeLayout.setLayoutCount = 1;
 
-        // free per-frame structures and deletion queue.
-        for (int i = 0 ; i < FRAME_OVERLAP; i++)
-        {
-            vkDestroyCommandPool(_device, _frames[i]._commandPool, nullptr); // don't have to destroy any individual command buffer. destroying command pool will delete of its all buffers.
-       
-            //destroy sync objects
-            vkDestroyFence(_device, _frames[i]._renderFence, nullptr);
-            vkDestroySemaphore(_device, _frames[i]._swapchainSemaphore, nullptr);
+    VK_CHECK(vkCreatePipelineLayout(_device, &computeLayout, nullptr, &_gradientPipelineLayout));
 
-            // free all objects from both frames.
-            _frames[i]._deletionQueue.flush();
-        }
+    // create the compute pipeline (finally)
 
-        // delete the render semaphores separately. the amount of semaphores we have is the same as the amount of swapchain images we have.
-        for (int i = 0 ; i < _swapchainImages.size() ; i++)
-        {
-            vkDestroySemaphore(_device, _renderSemaphores[i], nullptr);
-        }
+    // layout code
 
-        // flush the global deletion queue
-        _mainDeletionQueue.flush();
-
-        destroy_swapchain();
-
-        vkDestroySurfaceKHR(_instance, _surface, nullptr);
-        vkDestroyDevice(_device, nullptr);
-
-        vkb::destroy_debug_utils_messenger(_instance, _debugMessenger);
-        vkDestroyInstance(_instance, nullptr);
-
-        SDL_DestroyWindow(_window);
+    // create the shader module.
+    VkShaderModule computeDrawShader{};
+    if(!vkutil::load_shader_module("../../shaders/gradient.comp.spv", _device, &computeDrawShader))
+    {
+        fmt::print("Error when building the compute shader.\n");
     }
 
-    // clear engine pointer
-    loadedEngine = nullptr;
+    // create an info struct for the  parameters of a pipeline shader stage.
+    VkPipelineShaderStageCreateInfo stageInfo{};
+    stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageInfo.pNext = nullptr;
+    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageInfo.module = computeDrawShader;
+    stageInfo.pName = "main"; // specify that in the shader module we loaded (computeDrawShader), we want to call the function "main". which is, well, the <main> function.
+
+    VkComputePipelineCreateInfo computePipelineCreateInfo{};
+    computePipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    computePipelineCreateInfo.pNext = nullptr;
+    computePipelineCreateInfo.layout = _gradientPipelineLayout;
+    computePipelineCreateInfo.stage = stageInfo;
+
+    VK_CHECK(vkCreateComputePipelines(_device, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &_gradientPipeline));
+
+    vkDestroyShaderModule(_device, computeDrawShader, nullptr); // we only need the shader module to create the pipeline, so after we create the pipeline, we can delete it easily.
+
+    _mainDeletionQueue.push_function([&]()
+        {
+            vkDestroyPipelineLayout(_device, _gradientPipelineLayout, nullptr);
+            vkDestroyPipeline(_device, _gradientPipeline, nullptr);
+        }
+    );
 }
 
 
@@ -408,16 +420,25 @@ void VulkanEngine::cleanup()
 void VulkanEngine::draw_background(VkCommandBuffer cmdBuff)
 {
 
-    // make a clear-colour from frame buffer. This will flash with a 120 frame period.
-    VkClearColorValue clearValue{};
-    float flash = std::abs(std::sin(_frameNumber / 120.0f));
-    clearValue = { { 0.0f, 0.0f, flash, 1.0f} };
+    // bind the gradient drawing compute pipeline.
+    vkCmdBindPipeline(cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipeline);
 
-    // we specify the images' subresource range (what part of the image we want to clear) so we can pass it to vkCmdClearColorImage just below.
-    VkImageSubresourceRange clearRange = vkinit::image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
+    // bind the descriptor set containing the draw image for the compute pipeline
+    vkCmdBindDescriptorSets(cmdBuff, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipelineLayout, 0, 1, &_drawImageDescriptors, 0, nullptr);
 
-    // clear image, write it to the swapchain image.
-    vkCmdClearColorImage(cmdBuff, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
+    // execute the compute pipeline dispatch. we are using a 16x16 workgroup size, so we need to divide by it; as that will tell us how many workgroups we have for our resolution.
+    vkCmdDispatch(cmdBuff, std::ceil(_drawExtent.width / 16.0), std::ceil(_drawExtent.height / 16.0), 1);
+
+    //// make a clear-colour from frame buffer. this will flash with a 120 frame period.
+    //vkclearcolorvalue clearvalue{};
+    //float flash = std::abs(std::sin(_framenumber / 120.0f));
+    //clearvalue = { { 0.0f, 0.0f, flash, 1.0f} };
+
+    //// we specify the images' subresource range (what part of the image we want to clear) so we can pass it to vkcmdclearcolorimage just below.
+    //vkimagesubresourcerange clearrange = vkinit::image_subresource_range(vk_image_aspect_color_bit);
+
+    //// clear image, write it to the swapchain image.
+    //vkcmdclearcolorimage(cmdbuff, _drawimage.image, vk_image_layout_general, &clearvalue, 1, &clearrange);
 }
 
 
@@ -601,4 +622,50 @@ void VulkanEngine::run()
 
         draw();
     }
+}
+
+
+
+void VulkanEngine::cleanup()
+{
+    if (_isInitialized) {
+
+        // make sure the GPU has stopped doing its things
+        vkDeviceWaitIdle(_device);
+
+        // free per-frame structures and deletion queue.
+        for (int i = 0; i < FRAME_OVERLAP; i++)
+        {
+            vkDestroyCommandPool(_device, _frames[i]._commandPool, nullptr); // don't have to destroy any individual command buffer. destroying command pool will delete of its all buffers.
+
+            //destroy sync objects
+            vkDestroyFence(_device, _frames[i]._renderFence, nullptr);
+            vkDestroySemaphore(_device, _frames[i]._swapchainSemaphore, nullptr);
+
+            // free all objects from both frames.
+            _frames[i]._deletionQueue.flush();
+        }
+
+        // delete the render semaphores separately. the amount of semaphores we have is the same as the amount of swapchain images we have.
+        for (int i = 0; i < _swapchainImages.size(); i++)
+        {
+            vkDestroySemaphore(_device, _renderSemaphores[i], nullptr);
+        }
+
+        // flush the global deletion queue
+        _mainDeletionQueue.flush();
+
+        destroy_swapchain();
+
+        vkDestroySurfaceKHR(_instance, _surface, nullptr);
+        vkDestroyDevice(_device, nullptr);
+
+        vkb::destroy_debug_utils_messenger(_instance, _debugMessenger);
+        vkDestroyInstance(_instance, nullptr);
+
+        SDL_DestroyWindow(_window);
+    }
+
+    // clear engine pointer
+    loadedEngine = nullptr;
 }
