@@ -85,7 +85,8 @@ public:
 
 	VkSwapchainKHR _swapchain;
 	VkFormat _swapchainImageFormat;
-	
+	uint32_t _swapchainImageIndex{};
+
 	// vkimage is a handle to the actual image object to use as texture or render to. imageview is a wrapper for that image.
 	// we need a vector/list of the swapchain images and image views we'll be using.
 	std::vector<VkImage> _swapchainImages;
@@ -121,15 +122,25 @@ public:
 	// I think, anyway.
 	std::vector<VkSemaphore> _renderSemaphores{};
 
+	/// --- vulkan descriptor members --- ///
+
 	DescriptorAllocator globalDescriptorAllocator;
 
 	VkDescriptorSet _drawImageDescriptors;
 	VkDescriptorSetLayout _drawImageDescriptorLayout;
 
-	uint32_t _swapchainImageIndex{};
+	/// --- vulkan pipeline members --- ///
 
 	VkPipeline _gradientPipeline;
 	VkPipelineLayout _gradientPipelineLayout;
+
+	/// --- vulkan immediate submit structures --- ///
+
+	VkFence _immediateFence{};
+	VkCommandBuffer _immediateCommandBuffer{};
+	VkCommandPool _immediateCommandPool{};
+
+	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
 	//initializes everything in the engine
 	void init();
@@ -156,6 +167,7 @@ private:
 	void init_descriptors();
 	void init_pipelines(); // calls the other pipeline initialization functions.
 	void init_background_pipelines();
+	void init_imgui();
 };
 
 

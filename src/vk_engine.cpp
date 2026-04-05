@@ -274,6 +274,18 @@ void VulkanEngine::init_commands()
 
         VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_frames[i]._mainCommandBuffer));
     }
+
+    // initializing the (immediate) command structures for use with imgui
+
+    VK_CHECK(vkCreateCommandPool(_device, &commandPoolInfo, nullptr, &_immediateCommandPool));
+
+    // allocate the command buffer for immediate submits
+    VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(_immediateCommandPool, 1);
+
+    VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_immediateCommandBuffer));
+
+    _mainDeletionQueue.push_function([=]() {vkDestroyCommandPool(_device, _immediateCommandPool, nullptr); });
+
 }
 
 void VulkanEngine::init_sync_structures()
@@ -455,6 +467,10 @@ void VulkanEngine::draw()
     /// 6. We transition vulkan images      (the GPU stores images in different formats, we have to convert a swapchain image layout, which is the vulkan abstraction over these formats,
     ///                                     into a format that we are able to write/draw to, and then transition it again into a layout we can display... we do this using a pipeline 
     ///                                     barrier, which is in <vk_images.h>).
+    /// 7. end command buffer recording.
+    /// 8. submit the command buffer (to a queue).
+    /// 9. wait for _renderSemaphore so we know when rendering has finished.
+    /// 10. present the image!!
 
 
                                                                                 /// --- fences & command buffer setup --- ///
