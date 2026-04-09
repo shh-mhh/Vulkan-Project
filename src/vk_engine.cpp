@@ -9,6 +9,9 @@
 #include <vk_types.h>
 #include <vk_images.h>
 #include <vk_pipelines.h>
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_vulkan.h"
 
 // boostrap library
 #include "VkBootstrap.h"
@@ -323,6 +326,9 @@ void VulkanEngine::init_sync_structures()
 
         VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
     }
+
+    VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_immediateFence));
+    _mainDeletionQueue.push_function([=]() { vkDestroyFence(_device, _immediateFence, nullptr); });
 }
 
 void VulkanEngine::init_descriptors()
@@ -426,9 +432,6 @@ void VulkanEngine::init_background_pipelines()
     );
 }
 
-
-
-
 void VulkanEngine::draw_background(VkCommandBuffer cmdBuff)
 {
 
@@ -453,8 +456,51 @@ void VulkanEngine::draw_background(VkCommandBuffer cmdBuff)
     //vkcmdclearcolorimage(cmdbuff, _drawimage.image, vk_image_layout_general, &clearvalue, 1, &clearrange);
 }
 
+void VulkanEngine::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function)
+{
+    VK_CHECK(vkResetFences(_device, 1, &_immediateFence));
+    VK_CHECK(vkResetCommandBuffer(_immediateCommandBuffer, 0));
 
+    VkCommandBuffer cmd = _immediateCommandBuffer;
 
+    VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+    VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+    function(cmd); // record the function(s) into the command buffer
+
+    VK_CHECK(vkEndCommandBuffer(cmd));
+
+    VkCommandBufferSubmitInfo cmdInfo = vkinit::command_buffer_submit_info(cmd);
+    VkSubmitInfo2 submitInfo = vkinit::submit_info(&cmdInfo, nullptr, nullptr);
+
+    // submit command buffer to the queue and execute it.
+    // _renderFence will now block until the graphics commands finish execution.
+    VK_CHECK(vkQueueSubmit2(_graphicsQueue, 1, &submitInfo, _immediateFence));
+
+    // we can wait for the fence at the very end of the function, as we don't call it again and again (unlike the <draw> function below). 
+    VK_CHECK(vkWaitForFences(_device, 1, &_immediateFence, true, 9999999999));
+}
+
+void VulkanEngine::init_imgui()
+{
+    // 1: Create a descriptor pool for IMGUI
+    //  the size of the pool is very oversize, but it's copied from the imgui demo itself.
+    VkDescriptorPoolSize pool_sizes[] = { { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 } };
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+
+}
 
 void VulkanEngine::draw()
 {

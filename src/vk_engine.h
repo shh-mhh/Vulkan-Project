@@ -140,6 +140,7 @@ public:
 	VkCommandBuffer _immediateCommandBuffer{};
 	VkCommandPool _immediateCommandPool{};
 
+	// this function will allow us to submit data uploads and other "instant" operations outside of the render loop.
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
 	//initializes everything in the engine
