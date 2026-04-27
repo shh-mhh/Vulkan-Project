@@ -169,6 +169,7 @@ private:
 	void init_pipelines(); // calls the other pipeline initialization functions.
 	void init_background_pipelines();
 	void init_imgui();
+	void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
 };
 
 

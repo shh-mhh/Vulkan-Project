@@ -65,6 +65,8 @@ void VulkanEngine::init()
     init_descriptors();
 
     init_pipelines();
+    
+    init_imgui();
 
     // everything went fine
     _isInitialized = true;
@@ -485,7 +487,7 @@ void VulkanEngine::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& f
 void VulkanEngine::init_imgui()
 {
     // 1: Create a descriptor pool for IMGUI
-    //  the size of the pool is very oversize, but it's copied from the imgui demo itself.
+    //  the size of the pool is very oversized, but it's copied from the imgui demo itself.
     VkDescriptorPoolSize pool_sizes[] = { { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
         { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
         { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
@@ -498,7 +500,57 @@ void VulkanEngine::init_imgui()
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
         { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 } };
 
-    VkDescriptorPoolCreateInfo poolInfo{};
+    VkDescriptorPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000;
+    pool_info.poolSizeCount = (uint32_t)std::size(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+
+    VkDescriptorPool imguiPool;
+    VK_CHECK(vkCreateDescriptorPool(_device, &pool_info, nullptr, &imguiPool));
+
+    // 2: Initialize the imgui library
+
+    // this initializes the core structures of imgui
+    ImGui::CreateContext();
+
+    // this initializes imgui for SDL
+    ImGui_ImplSDL2_InitForVulkan(_window);
+
+    // this initializes imgui for Vulkan
+    ImGui_ImplVulkan_InitInfo init_info{};
+    init_info.Instance = _instance;
+    init_info.PhysicalDevice = _chosenGPU;
+    init_info.Device = _device;
+    init_info.Queue = _graphicsQueue;
+    init_info.DescriptorPool = imguiPool;
+    init_info.MinImageCount = 3;
+    init_info.ImageCount = 3;
+    init_info.UseDynamicRendering = true;
+
+    // dynamic rendering parameters for imgui to use
+    init_info.PipelineRenderingCreateInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+    init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &_swapchainImageFormat;
+
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+    ImGui_ImplVulkan_Init(&init_info);
+
+    ImGui_ImplVulkan_CreateFontsTexture();
+
+    // add the destruction functions for the imgui structures
+    _mainDeletionQueue.push_function([=]() {
+        ImGui_ImplVulkan_Shutdown(); 
+        vkDestroyDescriptorPool(_device, imguiPool, nullptr); 
+        });
+}
+
+void::VulkanEngine::draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
+{
+
+
 
 }
 
@@ -657,6 +709,9 @@ void VulkanEngine::run()
                 }
             }
 
+            // send SDL event to imgui for handling
+            ImGui_ImplSDL2_ProcessEvent(&e);
+
             /// log some simple input.
             if (e.type == SDL_KEYDOWN)
             {
@@ -681,6 +736,17 @@ void VulkanEngine::run()
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
+
+        // make new frames for imgui
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
+
+        // some imgui UI that we can use for testing
+        ImGui::ShowDemoWindow();
+
+        // make imgui calculate the internal draw structures (we have to draw it to the screen ourselves; this function just makes imgui do the magical calculations in the backend that we can use).
+        ImGui::Render();
 
         draw();
     }
