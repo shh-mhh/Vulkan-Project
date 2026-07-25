@@ -63,6 +63,23 @@ struct FrameData
 	DeletionQueue _deletionQueue;
 };
 
+struct ComputePushConstants
+{
+	glm::vec4 data1{};
+	glm::vec4 data2{};
+	glm::vec4 data3{};
+	glm::vec4 data4{};
+};
+
+struct ComputeEffect
+{
+	const char* name{};
+	
+	VkPipeline pipeline{};
+	VkPipelineLayout pipelineLayout{};
+
+	ComputePushConstants pcData{};
+};
 
 constexpr unsigned int FRAME_OVERLAP{ 2 };
 
@@ -133,6 +150,17 @@ public:
 
 	VkPipeline _gradientPipeline;
 	VkPipelineLayout _gradientPipelineLayout;
+	
+	std::vector<ComputeEffect> backgroundEffects{};
+	int currentBackgroundEffect{ 0 };
+
+	VkPipelineLayout _trianglePipelineLayout;
+	VkPipeline _trianglePipeline;
+
+	VkPipelineLayout _meshPipelineLayout;
+	VkPipeline _meshPipeline;
+
+	GPUMeshBuffers rectangle;
 
 	/// --- vulkan immediate submit structures --- ///
 
@@ -169,7 +197,14 @@ private:
 	void init_pipelines(); // calls the other pipeline initialization functions.
 	void init_background_pipelines();
 	void init_imgui();
-	void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
+	void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView); // perhaps make this a public member
+	void init_triangle_pipeline();
+	void draw_geometry(VkCommandBuffer cmdBuff); // perhaps make this a public member
+	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage); // perhaps make this a public member
+	void destroy_buffer(const AllocatedBuffer& buffer);
+	GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+	void init_mesh_pipelines();
+	void init_default_data();
 };
 
 
