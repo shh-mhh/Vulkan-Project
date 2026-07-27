@@ -91,6 +91,12 @@ public:
 	int _frameNumber {0};
 	bool stop_rendering{ false };
 	VkExtent2D _windowExtent{ 1700 , 900 };
+	// /src/CMakeLists.txt defines the SHADER_PATH preprocessor macro, so we can get the shader path easily
+	// (it doesn't depend on the current working directory, which is a pain in the ass to get right).
+	// to use it, we just concatenate it with the shader file name, and we have the full path to the shader file.
+	// like SHADER_PATH + "shader.spv" will give us the full path to the shader.spv file. 
+	// remember to use .c_str() to convert the string to a const char* for vulkan functions.
+	std::string _shaderPath = std::string(SHADER_PATH);
 
 	/// --- vulkan initialization members --- ///
 

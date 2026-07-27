@@ -19,6 +19,9 @@ add_executable (engine
   camera.h
 )
 
+# Define a preprocessor macro so C++ knows where the source folder is
+target_compile_definitions(engine PRIVATE SHADER_PATH="${CMAKE_SOURCE_DIR}/shaders/")
+
 set_property(TARGET engine PROPERTY CXX_STANDARD 20)
 target_compile_definitions(engine PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)
 target_include_directories(engine PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
