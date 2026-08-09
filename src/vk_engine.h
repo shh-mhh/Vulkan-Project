@@ -191,6 +191,8 @@ public:
 
 	void draw_background(VkCommandBuffer cmd);
 
+	GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+
 private:
 
 	void init_vulkan();
@@ -208,7 +210,6 @@ private:
 	void draw_geometry(VkCommandBuffer cmdBuff); // perhaps make this a public member
 	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage); // perhaps make this a public member
 	void destroy_buffer(const AllocatedBuffer& buffer);
-	GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 	void init_mesh_pipelines();
 	void init_default_data();
 };
